@@ -1,130 +1,141 @@
-# Sistema de Biblioteca — Levantamento de Requisitos
+# Diagramas do Sistema de Biblioteca
 
-**Stack:** Spring Boot + PostgreSQL (backend) | Angular (frontend)
-**Autor:** William
-**Data:** Agosto/2026
+Este documento descreve os três diagramas de modelagem do projeto: o **diagrama de atores** (visão macro do sistema), o **diagrama ER** (modelagem do banco de dados) e o **diagrama de sequência** (fluxo de registro de empréstimo).
 
 ---
 
-## 1. Visão Geral
+## 1. Diagrama de Atores e Módulos
 
-Sistema interno de gestão de biblioteca para cadastro de pessoas, livros, controle de empréstimos, devoluções, multas por atraso e fila de reserva de livros indisponíveis.
+### Objetivo
 
-## 2. Atores
+Representar quem interage com o sistema e quais são os grandes módulos funcionais, antes de entrar em detalhes de banco de dados ou API.
 
-| Ator | Descrição |
+### Elementos
+
+**Ator**
+- **Bibliotecário/Admin** — único ator do sistema (conforme decidido no levantamento de requisitos). Acessa todos os módulos após autenticação.
+
+**Módulos do sistema**
+| Módulo | Responsabilidade |
 |---|---|
-| Bibliotecário/Admin | Único perfil do sistema. Acesso completo: cadastros, empréstimos, devoluções, reservas. |
+| Pessoas | Cadastro, edição, listagem e inativação de pessoas (RF01, RF02) |
+| Livros | Cadastro, edição, listagem e controle de exemplares (RF03, RF04) |
+| Empréstimos | Registro de empréstimo/devolução e cálculo de multa (RF05–RF08, RN01–RN03) |
+| Reservas | Fila de espera, prazo de retirada e expiração sob demanda (RF09–RF11, RN04–RN08) |
+
+**Autenticação (JWT)** — camada transversal que protege o acesso a todos os módulos (RS01–RS07). Todo módulo passa por ela antes de processar qualquer requisição do Bibliotecário.
+
+### Por que só um ator
+
+Como definido no levantamento de requisitos, o sistema é de uso interno — não existe perfil de "usuário comum" consultando o acervo publicamente. Isso simplifica a autorização: não há necessidade de `@PreAuthorize` com múltiplas roles, apenas autenticação (logado ou não logado).
+
+### Relação entre módulos
+
+- **Empréstimos** depende de **Pessoas** e **Livros** (chaves estrangeiras).
+- **Reservas** depende de **Pessoas** e **Livros** também, e se comunica indiretamente com **Empréstimos**: toda devolução (módulo Empréstimos) verifica a fila de Reservas para o mesmo livro.
 
 ---
 
-## 3. Requisitos Funcionais (RF)
+## 2. Diagrama ER (Entidade-Relacionamento)
 
-### Pessoa
-| ID | Descrição |
-|---|---|
-| RF01 | Cadastrar, editar, listar e excluir/inativar pessoa |
-| RF02 | Impedir exclusão de pessoa com empréstimo ativo (permitir apenas inativação) |
+### Objetivo
 
-### Livro
-| ID | Descrição |
-|---|---|
-| RF03 | Cadastrar, editar, listar e excluir livro |
-| RF04 | Controlar quantidade total x quantidade disponível de exemplares |
+Modelar as tabelas do banco de dados PostgreSQL, seus campos, tipos e relacionamentos, servindo de base direta para as migrations Flyway.
 
-### Empréstimo
-| ID | Descrição |
-|---|---|
-| RF05 | Registrar empréstimo (validando disponibilidade e pendências da pessoa) |
-| RF06 | Registrar devolução |
-| RF07 | Calcular multa automaticamente quando a devolução ocorrer após a data prevista |
-| RF08 | Listar empréstimos ativos, atrasados e histórico |
+### Entidades
 
-### Reserva
-| ID | Descrição |
-|---|---|
-| RF09 | Permitir reserva quando não houver exemplar disponível (`quantidadeDisponivel == 0`) |
-| RF10 | Disponibilizar automaticamente o livro para a próxima pessoa da fila quando houver devolução |
-| RF11 | Definir prazo de retirada do livro reservado (ex: 48h) antes de passar para o próximo da fila |
+**PESSOA**
+| Campo | Tipo | Observação |
+|---|---|---|
+| id | bigint | PK |
+| nome | string | |
+| cpf | string | UK — evita cadastro duplicado |
+| email | string | |
+| telefone | string | |
 
----
+**LIVRO**
+| Campo | Tipo | Observação |
+|---|---|---|
+| id | bigint | PK |
+| titulo | string | |
+| autor | string | |
+| isbn | string | UK |
+| quantidade_total | int | |
+| quantidade_disponivel | int | Decrementada no empréstimo, incrementada na devolução |
 
-## 4. Regras de Negócio (RN)
+**EMPRESTIMO**
+| Campo | Tipo | Observação |
+|---|---|---|
+| id | bigint | PK |
+| pessoa_id | bigint | FK → Pessoa |
+| livro_id | bigint | FK → Livro |
+| data_emprestimo | date | |
+| data_prevista_devolucao | date | |
+| data_devolucao_real | date | Nulo enquanto o empréstimo está ativo |
+| valor_multa | decimal | Nunca `double` — evita erro de arredondamento monetário |
+| status | string (enum) | ATIVO, ATRASADO, DEVOLVIDO — calculado, nunca setado manualmente (RN09) |
 
-| ID | Descrição |
-|---|---|
-| RN01 | Multa: R$1,00 por dia de atraso, calculada no momento da devolução (`dias_atraso = dataDevolucaoReal - dataPrevistaDevolucao`) |
-| RN02 | Pessoa com multa pendente (não paga) não pode realizar novo empréstimo |
-| RN03 | Empréstimo só é permitido se `quantidadeDisponivel > 0` **e** a pessoa não tiver pendências |
-| RN04 | Se `quantidadeDisponivel == 0`, a pessoa pode entrar na fila de reserva do livro |
-| RN05 | Fila de reserva segue ordem de chegada (`dataReserva ASC`) |
-| RN06 | Ao ocorrer devolução, o sistema verifica a fila: havendo reserva pendente, reserva automaticamente o exemplar para o primeiro da fila e define prazo de retirada |
-| RN07 | Se o prazo de retirada expirar sem retirada, a reserva expira e passa para o próximo da fila |
-| RN08 | Uma pessoa não pode ter mais de uma reserva ativa para o mesmo livro |
-| RN09 | Status do empréstimo é sempre calculado (nunca armazenado manualmente): `ATIVO`, `ATRASADO` ou `DEVOLVIDO` |
+**RESERVA**
+| Campo | Tipo | Observação |
+|---|---|---|
+| id | bigint | PK |
+| pessoa_id | bigint | FK → Pessoa |
+| livro_id | bigint | FK → Livro |
+| data_reserva | timestamp | Define a ordem da fila (RN05) |
+| prazo_retirada | timestamp | Preenchido quando o exemplar fica disponível para a pessoa |
+| status | string (enum) | AGUARDANDO, DISPONIVEL, RETIRADA, EXPIRADA, CANCELADA |
 
-**Decisão:** expiração de reservas vencidas será feita **sob demanda** (não haverá job agendado nesta versão). Toda consulta à fila de reservas ou tentativa de novo empréstimo do livro verifica se há reserva `DISPONIVEL` com `prazoRetirada` vencido; se houver, expira na hora e processa a fila. Job agendado (`@Scheduled`) fica registrado como melhoria futura (RF12 no roadmap).
+### Relacionamentos
 
----
+- **Pessoa 1:N Emprestimo** — uma pessoa pode ter vários empréstimos ao longo do tempo
+- **Pessoa 1:N Reserva** — uma pessoa pode ter várias reservas (mas não duplicadas para o mesmo livro — RN08)
+- **Livro 1:N Emprestimo** — um livro (via seus exemplares) pode gerar vários empréstimos
+- **Livro 1:N Reserva** — um livro pode ter uma fila de várias pessoas aguardando
 
-## 5. Requisitos Não-Funcionais (RNF)
+### Decisões de modelagem
 
-| ID | Descrição |
-|---|---|
-| RNF01 | Backend em Spring Boot + PostgreSQL, API REST |
-| RNF02 | Frontend em Angular, consumindo a API |
-| RNF03 | Validações de negócio isoladas na camada de Service (Controller não contém regra de negócio) |
-| RNF04 | Tratamento de erros padronizado via `@ControllerAdvice` + exceptions customizadas (`RegraNegocioException`, `RecursoNaoEncontradoException`) |
-| RNF05 | Versionamento de schema do banco via Flyway |
-
----
-
-## 6. Requisitos de Segurança (RS)
-
-### Backend
-| ID | Descrição |
-|---|---|
-| RS01 | Autenticação via JWT: access token de curta duração (~15min) + refresh token em cookie `httpOnly` |
-| RS02 | Senha do bibliotecário armazenada com hash BCrypt, nunca em texto plano |
-| RS03 | Todos os endpoints protegidos por padrão, exceto `/auth/login` |
-| RS04 | Nenhuma resposta da API expõe senha/hash, mesmo em DTOs de erro |
-| RS05 | `application.properties` fora do Git (`.gitignore`), com `application.properties.example` versionado |
-| RS06 | Validação de entrada em todos os DTOs (`@Valid`, `@NotBlank`, `@Email`, etc.) |
-| RS07 | CORS configurado explicitamente, liberando apenas a origem do Angular (nunca `*`) |
-
-### Frontend (Angular)
-| ID | Descrição |
-|---|---|
-| RS08 | Rotas protegidas por `AuthGuard` — sem token válido, redireciona para login |
-| RS09 | `HttpInterceptor` para anexar o access token nas requisições e tratar renovação automática (401 → refresh → repete request) |
-| RS10 | Access token armazenado em memória (nunca em `localStorage`), refresh token apenas em cookie `httpOnly` gerenciado pelo backend |
-| RS11 | Logout limpa o estado local e invalida o refresh token no backend |
+1. **`status` como enum, não como texto livre** — mapeado no JPA com `@Enumerated(EnumType.STRING)`. Isso grava o nome do valor no banco (ex: `"ATIVO"`), não um índice numérico — protege contra corrupção de dados se a ordem do enum mudar no código.
+2. **`valor_multa` como `decimal`** — tipos de ponto flutuante (`double`, `float`) têm erro de arredondamento; para valores monetários, `decimal`/`BigDecimal` é obrigatório.
+3. **Datas de empréstimo em `date`, datas de reserva em `timestamp`** — o prazo de retirada de uma reserva é medido em horas (ex: 48h), então precisa de granularidade de hora. O ciclo de empréstimo é tratado em dias corridos.
+4. **Sem campo de imagem/capa no Livro** — decisão registrada no levantamento de requisitos (ver RF13 nas melhorias futuras).
 
 ---
 
-## 7. Entidades Principais (visão preliminar)
+## 3. Diagrama de Sequência — Registro de Empréstimo
 
-- **Pessoa** — id, nome, cpf, email, telefone
-- **Livro** — id, título, autor, isbn, quantidadeTotal, quantidadeDisponivel *(sem campo de imagem/capa nesta versão — decisão registrada abaixo)*
-- **Emprestimo** — id, pessoa (FK), livro (FK), dataEmprestimo, dataPrevistaDevolucao, dataDevolucaoReal, valorMulta, status (calculado)
-- **Reserva** — id, pessoa (FK), livro (FK), dataReserva, prazoRetirada, status (AGUARDANDO, DISPONIVEL, RETIRADA, EXPIRADA, CANCELADA)
+### Objetivo
 
-**Decisão — imagem de capa:** avaliadas 3 opções (BLOB no PostgreSQL, arquivo em disco, cloud storage externo como Cloudinary/S3). Como o deploy será em Railway/Render (filesystem efêmero), a opção viável em produção seria cloud storage externo — porém, **decidido não incluir imagem de capa nesta versão** para manter o foco no core do sistema (empréstimo, devolução, multa, fila). Fica registrado como melhoria futura (RF13 no roadmap).
+Mostrar a ordem temporal das interações entre as camadas do sistema durante a operação mais rica em regras de negócio: registrar um empréstimo. Enquanto o diagrama ER mostra *o que existe* e o de atores mostra *quem acessa o quê*, o diagrama de sequência mostra *o que acontece, passo a passo, quando o Bibliotecário aperta "confirmar"*.
 
-*Modelagem detalhada (diagrama ER, tipos de dados, constraints) a ser feita na próxima etapa.*
+### Participantes
+
+| Participante | Papel |
+|---|---|
+| Bibliotecário | Inicia a ação na interface |
+| Frontend | Angular — envia a requisição HTTP |
+| API | Controller do Spring Boot — recebe a requisição, delega ao Service |
+| Service | Camada de regras de negócio — nunca o Controller (RNF03) |
+| Banco de dados | PostgreSQL — consultado e atualizado pelo Service via Repository |
+
+### Fluxo
+
+1. O Bibliotecário registra o empréstimo na tela do Angular
+2. O Frontend envia `POST /emprestimos` para a API
+3. O Controller delega toda a validação ao Service (nunca valida regra de negócio na própria camada de Controller)
+4. O Service consulta o banco em duas etapas de validação, **antes** de qualquer escrita:
+   - A pessoa tem multa pendente? (RN02) — se sim, interrompe aqui
+   - O livro tem exemplar disponível? (RN03) — se não, interrompe e sugere reserva (RF09)
+5. Só depois de ambas as validações passarem, o Service grava: decrementa `quantidade_disponivel` do livro e insere o novo registro de `Emprestimo` com status `ATIVO`
+6. A resposta sobe de volta pela mesma cadeia até a confirmação aparecer para o Bibliotecário
+
+### Por que essa ordem importa
+
+O ponto crítico do diagrama é que **as duas validações acontecem antes de qualquer escrita no banco**. Se a validação de disponibilidade viesse depois de decrementar a quantidade, um cenário de concorrência (dois empréstimos do mesmo exemplar quase simultâneos) poderia deixar `quantidade_disponivel` negativa. Esse é o tipo de bug que só aparece sob carga — vale a pena, quando for implementar o Service, considerar uma transação (`@Transactional`) envolvendo a leitura e a escrita juntas para reforçar essa garantia.
+
+O fluxo de devolução (não desenhado aqui) segue lógica parecida, mas incluindo a verificação da fila de reserva (RN06) depois de incrementar `quantidade_disponivel` — pode ser o próximo diagrama de sequência quando chegarmos nessa parte da implementação.
 
 ---
 
-## 8. Próximos Passos
+## 4. Rastreabilidade
 
-1. Modelagem do banco de dados (diagrama ER)
-2. Criação das migrations Flyway
-3. Implementação do backend (entidades → repositories → services → controllers)
-4. Implementação do frontend Angular
-
-## 9. Melhorias Futuras (fora do escopo do MVP)
-
-| ID | Descrição |
-|---|---|
-| RF12 | Job agendado (`@Scheduled`) para expirar reservas vencidas automaticamente, substituindo a verificação sob demanda |
-| RF13 | Upload de imagem de capa do livro, via storage externo (ex: Cloudinary), com URL armazenada no banco |
+Ambos os diagramas devem ser consultados junto com [`requisitos-sistema-biblioteca.md`](requisitos-sistema-biblioteca.md), que contém o detalhamento de cada RF, RN, RNF e RS citado aqui.
