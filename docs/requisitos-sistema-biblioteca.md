@@ -6,6 +6,8 @@ Este documento descreve os três diagramas de modelagem do projeto: o **diagrama
 
 ## 1. Diagrama de Atores e Módulos
 
+![Diagrama de atores e módulos](atores-diagrama.svg)
+
 ### Objetivo
 
 Representar quem interage com o sistema e quais são os grandes módulos funcionais, antes de entrar em detalhes de banco de dados ou API.
@@ -37,6 +39,8 @@ Como definido no levantamento de requisitos, o sistema é de uso interno — nã
 ---
 
 ## 2. Diagrama ER (Entidade-Relacionamento)
+
+![Diagrama ER](er-diagrama.svg)
 
 ### Objetivo
 
@@ -102,6 +106,8 @@ Modelar as tabelas do banco de dados PostgreSQL, seus campos, tipos e relacionam
 ---
 
 ## 3. Diagrama de Sequência — Registro de Empréstimo
+
+![Diagrama de sequência do registro de empréstimo](sequencia-diagrama.svg)
 
 ### Objetivo
 
