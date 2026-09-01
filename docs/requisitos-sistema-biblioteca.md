@@ -47,6 +47,13 @@ Sistema interno de gestão de biblioteca para cadastro de pessoas, livros, contr
 | RF10 | Disponibilizar automaticamente o livro para a próxima pessoa da fila quando houver devolução |
 | RF11 | Definir prazo de retirada do livro reservado (ex: 48h) antes de passar para o próximo da fila |
 
+### Multa, Exclusão e Autenticação
+| ID | Descrição |
+|---|---|
+| RF12 | Registrar pagamento de multa via endpoint específico (`PATCH /emprestimos/{id}/pagar-multa`), atualizando o campo `multa_paga` do Empréstimo |
+| RF13 | Impedir exclusão de livro com empréstimo ativo ou reserva pendente — permitir apenas inativação (mesmo padrão de RF02 para Pessoa) |
+| RF14 | Endpoint de registro do Bibliotecário/Admin, ativo **somente enquanto não existir nenhum usuário cadastrado** (bootstrap de primeiro uso); autodesativa (retorna 403) após o primeiro cadastro |
+
 ---
 
 ## 4. Regras de Negócio (RN)
@@ -62,8 +69,13 @@ Sistema interno de gestão de biblioteca para cadastro de pessoas, livros, contr
 | RN07 | Se o prazo de retirada expirar sem retirada, a reserva expira e passa para o próximo da fila |
 | RN08 | Uma pessoa não pode ter mais de uma reserva ativa para o mesmo livro |
 | RN09 | Status do empréstimo é sempre calculado (nunca armazenado manualmente): `ATIVO`, `ATRASADO` ou `DEVOLVIDO` |
+| RN10 | Prazo padrão de empréstimo: 14 dias corridos a partir da data do empréstimo (`dataPrevistaDevolucao = dataEmprestimo + 14`) — política fixa do sistema, não escolhida por empréstimo |
+| RN11 | Limite de 3 empréstimos ativos simultâneos por pessoa |
+| RN12 | Multa tem teto de R$20,00 por empréstimo, mesmo que os dias de atraso ultrapassem esse valor em cálculo linear |
+| RN13 | Pessoa que já está com o único exemplar de um livro pode reservá-lo para si mesma (autorreserva/renovação); nesse caso, o próximo empréstimo desse livro para essa mesma pessoa tem prazo reduzido de 7 dias (em vez dos 14 padrão de RN10) |
+| RN14 | Não é permitido reduzir `quantidadeTotal` de um livro abaixo da quantidade atualmente emprestada (`quantidadeTotal - quantidadeDisponivel`) |
 
-**Decisão:** expiração de reservas vencidas será feita **sob demanda** (não haverá job agendado nesta versão). Toda consulta à fila de reservas ou tentativa de novo empréstimo do livro verifica se há reserva `DISPONIVEL` com `prazoRetirada` vencido; se houver, expira na hora e processa a fila. Job agendado (`@Scheduled`) fica registrado como melhoria futura (RF12 no roadmap).
+**Decisão:** expiração de reservas vencidas será feita **sob demanda** (não haverá job agendado nesta versão). Toda consulta à fila de reservas ou tentativa de novo empréstimo do livro verifica se há reserva `DISPONIVEL` com `prazoRetirada` vencido; se houver, expira na hora e processa a fila. Job agendado (`@Scheduled`) fica registrado como melhoria futura (RF15 no roadmap).
 
 ---
 
@@ -104,12 +116,12 @@ Sistema interno de gestão de biblioteca para cadastro de pessoas, livros, contr
 
 ## 7. Entidades Principais (visão preliminar)
 
-- **Pessoa** — id, nome, cpf, email, telefone
-- **Livro** — id, título, autor, isbn, quantidadeTotal, quantidadeDisponivel *(sem campo de imagem/capa nesta versão — decisão registrada abaixo)*
-- **Emprestimo** — id, pessoa (FK), livro (FK), dataEmprestimo, dataPrevistaDevolucao, dataDevolucaoReal, valorMulta, status (calculado)
+- **Pessoa** — id, nome, cpf, email, telefone, ativo
+- **Livro** — id, título, autor, isbn, quantidadeTotal, quantidadeDisponivel, ativo *(sem campo de imagem/capa nesta versão — decisão registrada abaixo)*
+- **Emprestimo** — id, pessoa (FK), livro (FK), dataEmprestimo, dataPrevistaDevolucao, dataDevolucaoReal, valorMulta, multaPaga (boolean, default false), status (calculado)
 - **Reserva** — id, pessoa (FK), livro (FK), dataReserva, prazoRetirada, status (AGUARDANDO, DISPONIVEL, RETIRADA, EXPIRADA, CANCELADA)
 
-**Decisão — imagem de capa:** avaliadas 3 opções (BLOB no PostgreSQL, arquivo em disco, cloud storage externo como Cloudinary/S3). Como o deploy será em Railway/Render (filesystem efêmero), a opção viável em produção seria cloud storage externo — porém, **decidido não incluir imagem de capa nesta versão** para manter o foco no core do sistema (empréstimo, devolução, multa, fila). Fica registrado como melhoria futura (RF13 no roadmap).
+**Decisão — imagem de capa:** avaliadas 3 opções (BLOB no PostgreSQL, arquivo em disco, cloud storage externo como Cloudinary/S3). Como o deploy será em Railway/Render (filesystem efêmero), a opção viável em produção seria cloud storage externo — porém, **decidido não incluir imagem de capa nesta versão** para manter o foco no core do sistema (empréstimo, devolução, multa, fila). Fica registrado como melhoria futura (RF16 no roadmap).
 
 *Modelagem detalhada (diagrama ER, tipos de dados, constraints) a ser feita na próxima etapa.*
 
@@ -126,5 +138,8 @@ Sistema interno de gestão de biblioteca para cadastro de pessoas, livros, contr
 
 | ID | Descrição |
 |---|---|
-| RF12 | Job agendado (`@Scheduled`) para expirar reservas vencidas automaticamente, substituindo a verificação sob demanda |
-| RF13 | Upload de imagem de capa do livro, via storage externo (ex: Cloudinary), com URL armazenada no banco |
+| RF15 | Job agendado (`@Scheduled`) para expirar reservas vencidas automaticamente, substituindo a verificação sob demanda |
+| RF16 | Upload de imagem de capa do livro, via storage externo (ex: Cloudinary), com URL armazenada no banco |
+| RF17 | Renovação de empréstimo (estender prazo sem devolução física do livro) |
+| RF18 | Paginação nas listagens (empréstimos, livros, pessoas) — hoje sem tratamento, vale revisar conforme o volume de dados cresce |
+| RF19 | Testes automatizados (JUnit) cobrindo as regras de negócio da camada de Service |
